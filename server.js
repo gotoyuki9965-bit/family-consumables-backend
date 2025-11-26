@@ -9,6 +9,9 @@ const PORT = process.env.PORT || 5000;
 // 環境変数からLINEチャネルアクセストークンを取得
 const LINE_ACCESS_TOKEN = process.env.LINE_ACCESS_TOKEN;
 
+// Webhookログで取得したグループIDをここに設定
+const GROUP_ID = "Cbb622c8f631b41b84eb6217977e6dd48";
+
 app.use(cors());
 app.use(express.json());
 
@@ -53,16 +56,16 @@ app.post("/notify", async (req, res) => {
 // 毎日17:00に通知（テスト用）
 cron.schedule("0 17 * * *", () => {
   console.log("⏰ 毎日17:00に通知を送信します");
+  sendLine("⏰ 毎日17:00の定期通知です");
 });
 
-// LINE送信関数
+// LINE送信関数（グループID宛）
 async function sendLine(message) {
   try {
     await axios.post(
       "https://api.line.me/v2/bot/message/push",
       {
-        // TODO: Webhookイベントから取得した userId / groupId に差し替える
-        to: "U38d7b8626a9bf23e45f487d9aa3995f0",
+        to: GROUP_ID, // ← グループIDを指定
         messages: [{ type: "text", text: message }],
       },
       {
@@ -72,7 +75,7 @@ async function sendLine(message) {
         },
       }
     );
-    console.log("📲 LINE通知送信完了");
+    console.log("📲 グループ通知送信完了");
   } catch (err) {
     console.error("❌ LINE通知エラー:", err.response?.data || err.message);
   }
