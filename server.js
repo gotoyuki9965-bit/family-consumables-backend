@@ -232,7 +232,7 @@ app.post('/notify', async (req, res) => {
 });
 
 // ===== Cron: 毎日18:00に残数1以下を通知 =====
-cron.schedule('30 9 * * *', async () => {
+cron.schedule('55 9 * * *', async () => {
   try {
     const items = await Item.find({}).lean();
     const targets = items.filter(i => i.quantity <= 1);
