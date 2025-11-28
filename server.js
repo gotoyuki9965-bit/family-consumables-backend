@@ -4,6 +4,7 @@ const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const axios = require('axios');
+const cron = require('node-cron');
 
 const app = express();
 
@@ -37,7 +38,7 @@ const itemSchema = new mongoose.Schema(
     history: [
       { change: { type: Number, required: true }, timestamp: { type: Date, required: true } }
     ],
-    url: { type: String, default: "" }   // ← 商品リンクを追加
+    url: { type: String, default: "" }   // 商品リンクを追加
   },
   { timestamps: true }
 );
@@ -51,35 +52,20 @@ function calcDaysBetween(prevDate, currentDate) {
 }
 
 function computeRateAndEtaAfterDecrease(item, change, now) {
-  // changeは負数（消費）
   const absConsumed = Math.abs(change);
-
-  // 基準となる前回更新日時（最後のhistoryがあればそれ、なければlastUpdated）
   const prev = item.history?.length
     ? item.history[item.history.length - 1].timestamp
     : item.lastUpdated || now;
 
   let daysElapsed = calcDaysBetween(prev, now);
-  if (daysElapsed < 1) {
-    // 同日更新等で0除算を避けるための最小日数
-    daysElapsed = 1;
-  }
+  if (daysElapsed < 1) daysElapsed = 1;
 
-  const rate = absConsumed / daysElapsed; // 1日あたりの消費量
-  // 既存のrateとの平滑化：直近と過去のバランスをとる
+  const rate = absConsumed / daysElapsed;
   const smoothedRate =
     item.consumptionRate > 0 ? item.consumptionRate * 0.5 + rate * 0.5 : rate;
 
   const eta = smoothedRate > 0 ? item.quantity / smoothedRate : null;
-
   return { rate: smoothedRate, eta };
-}
-
-function colorByEta(eta) {
-  if (eta == null) return 'blue';
-  if (eta <= 0) return 'red';
-  if (eta <= 3) return 'orange';
-  return 'blue';
 }
 
 // ===== LINE Messaging API push =====
@@ -89,24 +75,17 @@ async function sendLineNotification(items, category = null) {
     return;
   }
 
-  // 対象（残り3日以内）
-  let targets = items.filter(
-    (i) => i.estimatedDaysLeft != null && i.estimatedDaysLeft <= 3
-  );
-  if (category) {
-    targets = targets.filter((i) => i.category === category);
-  }
+  let targets = items.filter(i => i.estimatedDaysLeft != null && i.estimatedDaysLeft <= 3);
+  if (category) targets = targets.filter(i => i.category === category);
 
   if (targets.length === 0) {
     console.log('No items need notification');
     return;
   }
 
-  const lines = targets.map((i) => {
+  const lines = targets.map(i => {
     const eta = Number(i.estimatedDaysLeft).toFixed(1);
-    const color = colorByEta(i.estimatedDaysLeft);
-    const emoji = color === 'red' ? '❌' : color === 'orange' ? '⏳' : '✅';
-    return `${emoji} ${i.name}（${i.category}）：残り約 ${eta} 日`;
+    return `⏳ ${i.name}（${i.category}）：残り約 ${eta} 日${i.url ? `\n👉 購入リンク: ${i.url}` : ""}`;
   });
 
   const message = `🛎️ 消耗品通知\n${lines.join('\n')}`;
@@ -130,42 +109,35 @@ app.get('/', (_req, res) => {
   res.json({ ok: true, service: 'consumables-backend' });
 });
 
-// カテゴリー一覧（DBから distinct）
+// カテゴリー一覧
 app.get('/categories', async (_req, res) => {
   try {
     const categories = await Item.distinct('category');
     res.json(categories);
   } catch (err) {
-    console.error('GET /categories error', err);
     res.status(500).json({ error: 'Failed to fetch categories' });
   }
 });
 
-// GET items（残数が少ない順で並べ替え、カテゴリー絞り込み）
+// アイテム一覧（残数昇順）
 app.get('/items', async (req, res) => {
   try {
     const { category } = req.query;
     const filter = category ? { category } : {};
     const items = await Item.find(filter).lean();
-
-    // 残数の昇順でソート
     items.sort((a, b) => a.quantity - b.quantity);
-
     res.json(items);
   } catch (err) {
-    console.error('GET /items error', err);
     res.status(500).json({ error: 'Failed to fetch items' });
   }
 });
 
-// POST item（新規追加：名前・個数・カテゴリー）
+// 新規追加
 app.post('/items', async (req, res) => {
   try {
-    const { name, quantity, category } = req.body;
+    const { name, quantity, category, url } = req.body;
     if (!name || category == null || quantity == null) {
-      return res
-        .status(400)
-        .json({ error: 'name, quantity, category are required' });
+      return res.status(400).json({ error: 'name, quantity, category are required' });
     }
     const now = new Date();
 
@@ -177,94 +149,77 @@ app.post('/items', async (req, res) => {
       consumptionRate: 0,
       estimatedDaysLeft: null,
       history: [],
-      url: url || ""   // ← 追加
+      url: url || ""
     });
 
     res.status(201).json(item);
   } catch (err) {
-    console.error('POST /items error', err);
     res.status(500).json({ error: 'Failed to create item' });
   }
 });
 
-// PUT item（一般更新：名前・カテゴリー変更など）
+// 一般更新
 app.put('/items/:id', async (req, res) => {
   try {
-    const { name, category } = req.body;
+    const { name, category, url } = req.body;
     const updates = {};
     if (name != null) updates.name = String(name).trim();
     if (category != null) updates.category = String(category).trim();
+    if (url != null) updates.url = String(url).trim();
     updates.lastUpdated = new Date();
 
-    const item = await Item.findByIdAndUpdate(req.params.id, updates, {
-      new: true
-    });
+    const item = await Item.findByIdAndUpdate(req.params.id, updates, { new: true });
     if (!item) return res.status(404).json({ error: 'Item not found' });
     res.json(item);
   } catch (err) {
-    console.error('PUT /items/:id error', err);
     res.status(500).json({ error: 'Failed to update item' });
   }
 });
 
-// DELETE item（削除）
+// 削除
 app.delete('/items/:id', async (req, res) => {
   try {
     const del = await Item.findByIdAndDelete(req.params.id);
     if (!del) return res.status(404).json({ error: 'Item not found' });
     res.json({ ok: true });
   } catch (err) {
-    console.error('DELETE /items/:id error', err);
     res.status(500).json({ error: 'Failed to delete item' });
   }
 });
 
-// PUT quantity（入力、＋1、－1、確定で在庫更新＆消耗スピード・残り日数計算）
+// 数量更新
 app.put('/items/:id/quantity', async (req, res) => {
   try {
     let { change, timestamp } = req.body;
-    if (change == null) {
-      return res
-        .status(400)
-        .json({ error: 'change is required (e.g., +2 or -1)' });
-    }
+    if (change == null) return res.status(400).json({ error: 'change is required' });
     change = Number(change);
-    if (Number.isNaN(change)) {
-      return res.status(400).json({ error: 'change must be a number' });
-    }
-    const now = timestamp ? new Date(timestamp) : new Date();
+    if (Number.isNaN(change)) return res.status(400).json({ error: 'change must be a number' });
 
+    const now = timestamp ? new Date(timestamp) : new Date();
     const item = await Item.findById(req.params.id);
     if (!item) return res.status(404).json({ error: 'Item not found' });
 
-    // 更新
     item.quantity = Math.max(item.quantity + change, 0);
     item.lastUpdated = now;
     item.history.push({ change, timestamp: now });
 
-    // 消費時のみ、レート・ETAを更新
     if (change < 0) {
       const { rate, eta } = computeRateAndEtaAfterDecrease(item, change, now);
       item.consumptionRate = rate;
       item.estimatedDaysLeft = eta;
     } else {
-      // 購入時：レートは維持、ETAは再計算（在庫が増えた分だけ延長）
-      if (item.consumptionRate > 0) {
-        item.estimatedDaysLeft = item.quantity / item.consumptionRate;
-      } else {
-        item.estimatedDaysLeft = null;
-      }
+      item.estimatedDaysLeft =
+        item.consumptionRate > 0 ? item.quantity / item.consumptionRate : null;
     }
 
     const saved = await item.save();
     res.json(saved);
   } catch (err) {
-    console.error('PUT /items/:id/quantity error', err);
     res.status(500).json({ error: 'Failed to update quantity' });
   }
 });
 
-// POST notify（通知の手動トリガー／カテゴリー指定対応）
+// 手動通知
 app.post('/notify', async (req, res) => {
   try {
     const { category } = req.body;
@@ -272,14 +227,11 @@ app.post('/notify', async (req, res) => {
     await sendLineNotification(items, category);
     res.json({ ok: true });
   } catch (err) {
-    console.error('POST /notify error', err);
     res.status(500).json({ error: 'Failed to send notification' });
   }
 });
 
-const cron = require('node-cron');
-
-// 毎日18:00に通知
+// ===== Cron: 毎日18:00に残数1以下を通知 =====
 cron.schedule('0 18 * * *', async () => {
   try {
     const items = await Item.find({}).lean();
@@ -291,8 +243,11 @@ cron.schedule('0 18 * * *', async () => {
       return;
     }
 
-    // 通知本文を生成
-    const lines = targets.map(i => `❌ ${i.name}（${i.category}）：残数 ${i.quantity}`);
+    // 通知本文を生成（商品リンクも含める）
+    const lines = targets.map(i =>
+      `❌ ${i.name}（${i.category}）：残数 ${i.quantity}${i.url ? `\n👉 購入リンク: ${i.url}` : ""}`
+    );
+
     const message = `🛎️ 消耗品通知（残数1以下）\n${lines.join('\n')}\n\n👉 アプリはこちらから：\nhttps://family-consumables-frontend.onrender.com/`;
 
     // LINE通知送信
