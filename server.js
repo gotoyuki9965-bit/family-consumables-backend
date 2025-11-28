@@ -32,7 +32,7 @@ const itemSchema = new mongoose.Schema(
     category: { type: String, required: true, trim: true }, // 例: "食品" / "日用品"
     quantity: { type: Number, required: true, min: 0 },     // 現在残数
     lastUpdated: { type: Date, default: () => new Date() }, // 最終更新日時
-    consumptionRate: { type: Number, default: 0 },          // 1日あたりの消費数
+    consumptionRate: { type: Number, default: 0 },          // 1日あたりの消費数（推定）
     estimatedDaysLeft: { type: Number, default: null },     // 残り日数（小数あり）
     history: [
       {
@@ -226,7 +226,7 @@ app.delete('/items/:id', async (req, res) => {
   }
 });
 
-// PUT quantity（＋／－で在庫更新＆消耗スピード・残り日数計算）
+// PUT quantity（入力、＋1、－1、確定で在庫更新＆消耗スピード・残り日数計算）
 app.put('/items/:id/quantity', async (req, res) => {
   try {
     let { change, timestamp } = req.body;
