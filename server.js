@@ -278,6 +278,37 @@ app.post('/notify', async (req, res) => {
   }
 });
 
+const cron = require('node-cron');
+
+// 毎日18:00に通知
+cron.schedule('0 18 * * *', async () => {
+  try {
+    const items = await Item.find({}).lean();
+    // 残数1以下のみ抽出
+    const targets = items.filter(i => i.quantity <= 1);
+
+    if (targets.length === 0) {
+      console.log("No items with quantity <= 1");
+      return;
+    }
+
+    // 通知本文を生成
+    const lines = targets.map(i => `❌ ${i.name}（${i.category}）：残数 ${i.quantity}`);
+    const message = `🛎️ 消耗品通知（残数1以下）\n${lines.join('\n')}\n\n👉 アプリはこちらから：\nhttps://family-consumables-frontend.onrender.com/`;
+
+    // LINE通知送信
+    await axios.post(
+      'https://api.line.me/v2/bot/message/push',
+      { to: LINE_USER_ID, messages: [{ type: 'text', text: message }] },
+      { headers: { Authorization: `Bearer ${LINE_CHANNEL_ACCESS_TOKEN}` } }
+    );
+
+    console.log("📲 LINE push sent (18:00 auto)");
+  } catch (err) {
+    console.error("❌ Auto notify error:", err?.response?.data || err.message);
+  }
+});
+
 // ===== Start =====
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
