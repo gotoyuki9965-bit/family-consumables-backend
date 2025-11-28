@@ -143,23 +143,17 @@ app.get('/categories', async (_req, res) => {
   }
 });
 
-// GET items（残量が少ない順で並べ替え、カテゴリー絞り込み）
+// GET items（残数が少ない順で並べ替え、カテゴリー絞り込み）
 app.get('/items', async (req, res) => {
   try {
     const { category } = req.query;
     const filter = category ? { category } : {};
     const items = await Item.find(filter).lean();
 
-    // 残量少ない順：ETAがあるものをETA昇順、ETAなしは末尾
-    const withEta = [];
-    const noEta = [];
-    for (const i of items) {
-      if (i.estimatedDaysLeft == null) noEta.push(i);
-      else withEta.push(i);
-    }
-    withEta.sort((a, b) => a.estimatedDaysLeft - b.estimatedDaysLeft);
+    // 残数の昇順でソート
+    items.sort((a, b) => a.quantity - b.quantity);
 
-    res.json([...withEta, ...noEta]);
+    res.json(items);
   } catch (err) {
     console.error('GET /items error', err);
     res.status(500).json({ error: 'Failed to fetch items' });
