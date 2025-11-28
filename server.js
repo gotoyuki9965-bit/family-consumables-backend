@@ -17,7 +17,7 @@ const {
   MONGODB_URI,
   PORT = 3000,
   LINE_CHANNEL_ACCESS_TOKEN,
-  LINE_USER_ID
+  LINE_GROUP_ID
 } = process.env;
 
 // ===== MongoDB connect =====
@@ -70,7 +70,7 @@ function computeRateAndEtaAfterDecrease(item, change, now) {
 
 // ===== LINE Messaging API push =====
 async function sendLineNotification(items, category = null) {
-  if (!LINE_CHANNEL_ACCESS_TOKEN || !LINE_USER_ID) {
+  if (!LINE_CHANNEL_ACCESS_TOKEN || !LINE_GROUP_ID) {
     console.log('LINE env not set, skip notification');
     return;
   }
@@ -93,7 +93,7 @@ async function sendLineNotification(items, category = null) {
   try {
     await axios.post(
       'https://api.line.me/v2/bot/message/push',
-      { to: LINE_USER_ID, messages: [{ type: 'text', text: message }] },
+      { to: LINE_GROUP_ID, messages: [{ type: 'text', text: message }] }, // ← 修正
       { headers: { Authorization: `Bearer ${LINE_CHANNEL_ACCESS_TOKEN}` } }
     );
     console.log('📲 LINE push sent');
@@ -232,10 +232,9 @@ app.post('/notify', async (req, res) => {
 });
 
 // ===== Cron: 毎日18:00に残数1以下を通知 =====
-cron.schedule('0 18 * * *', async () => {
+cron.schedule('20 18 * * *', async () => {
   try {
     const items = await Item.find({}).lean();
-    // 残数1以下のみ抽出
     const targets = items.filter(i => i.quantity <= 1);
 
     if (targets.length === 0) {
@@ -243,17 +242,15 @@ cron.schedule('0 18 * * *', async () => {
       return;
     }
 
-    // 通知本文を生成（商品リンクも含める）
     const lines = targets.map(i =>
       `❌ ${i.name}（${i.category}）：残数 ${i.quantity}${i.url ? `\n👉 購入リンク: ${i.url}` : ""}`
     );
 
     const message = `🛎️ 消耗品通知（残数1以下）\n${lines.join('\n')}\n\n👉 アプリはこちらから：\nhttps://family-consumables-frontend.onrender.com/`;
 
-    // LINE通知送信
     await axios.post(
       'https://api.line.me/v2/bot/message/push',
-      { to: LINE_USER_ID, messages: [{ type: 'text', text: message }] },
+      { to: LINE_GROUP_ID, messages: [{ type: 'text', text: message }] }, // ← 修正
       { headers: { Authorization: `Bearer ${LINE_CHANNEL_ACCESS_TOKEN}` } }
     );
 
