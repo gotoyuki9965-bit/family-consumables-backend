@@ -231,8 +231,8 @@ app.post('/notify', async (req, res) => {
   }
 });
 
-// ===== Cron: 毎日18:00に残数1以下を通知 =====
-cron.schedule('00 9 * * *', async () => {
+// ===== Cron: 毎日12:00に残数1以下を通知 =====
+cron.schedule('00 3 * * *', async () => {
   try {
     const items = await Item.find({}).lean();
     const targets = items.filter(i => i.quantity <= 1);
@@ -254,7 +254,7 @@ cron.schedule('00 9 * * *', async () => {
       { headers: { Authorization: `Bearer ${LINE_CHANNEL_ACCESS_TOKEN}` } }
     );
 
-    console.log("📲 LINE push sent (18:00 auto)");
+    console.log("📲 LINE push sent (12:00 auto)");
   } catch (err) {
     console.error("❌ Auto notify error:", err?.response?.data || err.message);
   }
