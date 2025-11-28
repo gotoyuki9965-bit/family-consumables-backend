@@ -35,11 +35,9 @@ const itemSchema = new mongoose.Schema(
     consumptionRate: { type: Number, default: 0 },          // 1日あたりの消費数（推定）
     estimatedDaysLeft: { type: Number, default: null },     // 残り日数（小数あり）
     history: [
-      {
-        change: { type: Number, required: true },           // +購入 / -消費
-        timestamp: { type: Date, required: true }
-      }
-    ]
+      { change: { type: Number, required: true }, timestamp: { type: Date, required: true } }
+    ],
+    url: { type: String, default: "" }   // ← 商品リンクを追加
   },
   { timestamps: true }
 );
@@ -178,7 +176,8 @@ app.post('/items', async (req, res) => {
       lastUpdated: now,
       consumptionRate: 0,
       estimatedDaysLeft: null,
-      history: []
+      history: [],
+      url: url || ""   // ← 追加
     });
 
     res.status(201).json(item);
